@@ -21,6 +21,44 @@ unsigned char input_data[] = "Prueba de proyecto 2";
 /* Tamaño del mensaje y del cifrado */
 int datalen = sizeof(input_data);
 
+/*
+ * Table giving odd parity in the low bit for ASCII characters
+ */
+static const char partab[128] =
+{
+  0x01, 0x01, 0x02, 0x02, 0x04, 0x04, 0x07, 0x07,
+  0x08, 0x08, 0x0b, 0x0b, 0x0d, 0x0d, 0x0e, 0x0e,
+  0x10, 0x10, 0x13, 0x13, 0x15, 0x15, 0x16, 0x16,
+  0x19, 0x19, 0x1a, 0x1a, 0x1c, 0x1c, 0x1f, 0x1f,
+  0x20, 0x20, 0x23, 0x23, 0x25, 0x25, 0x26, 0x26,
+  0x29, 0x29, 0x2a, 0x2a, 0x2c, 0x2c, 0x2f, 0x2f,
+  0x31, 0x31, 0x32, 0x32, 0x34, 0x34, 0x37, 0x37,
+  0x38, 0x38, 0x3b, 0x3b, 0x3d, 0x3d, 0x3e, 0x3e,
+  0x40, 0x40, 0x43, 0x43, 0x45, 0x45, 0x46, 0x46,
+  0x49, 0x49, 0x4a, 0x4a, 0x4c, 0x4c, 0x4f, 0x4f,
+  0x51, 0x51, 0x52, 0x52, 0x54, 0x54, 0x57, 0x57,
+  0x58, 0x58, 0x5b, 0x5b, 0x5d, 0x5d, 0x5e, 0x5e,
+  0x61, 0x61, 0x62, 0x62, 0x64, 0x64, 0x67, 0x67,
+  0x68, 0x68, 0x6b, 0x6b, 0x6d, 0x6d, 0x6e, 0x6e,
+  0x70, 0x70, 0x73, 0x73, 0x75, 0x75, 0x76, 0x76,
+  0x79, 0x79, 0x7a, 0x7a, 0x7c, 0x7c, 0x7f, 0x7f,
+};
+
+/*
+ * Add odd parity to low bit of 8 byte key
+ */
+void
+des_setparity (char *p)
+{
+  int i;
+
+  for (i = 0; i < 8; i++)
+    {
+      *p = partab[*p & 0x7f];
+      p++;
+    }
+}
+
 int main()
 {
 	/* Init vector */
@@ -28,7 +66,7 @@ int main()
 	DES_set_odd_parity(&iv);
 
     /* Llave original */
-	long the_key = 123456L;
+	long the_key = 18015398519481984L;
 	DES_key_schedule SchKey;
     /* Chequea paridad de la llave y la setea en SchKey */
 	set_key(the_key, &SchKey, 1);
@@ -43,7 +81,7 @@ int main()
 	int N, id; // comm size and rank
     /* upper es el máximo Long a comprobar,
     la llave original tiene que ser menor a este número */
-	long upper = (1L << 25); // upper bound DES keys 2^56
+	long upper = (1L << 56); // upper bound DES keys 2^56
 	long mylower, myupper; // local lower and upper bounds
 	MPI_Status st;
 	MPI_Request req;
@@ -130,35 +168,38 @@ void set_key(long key, DES_key_schedule *SchKey, int original) {
 		key <<= 1;
 		k += (key & (0xFE << i * 8));
 	}
+	des_setparity((char *)&k);
 	/* k to string */
-	char *str = malloc(sizeof(char) * 8);
-	sprintf(str, "%ld", k);
+	//char *str = malloc(sizeof(char) * 8);
+	//sprintf(str, "%ld", k);
 	/* str to DES_cblock */
 	DES_cblock Key;
 	DES_cblock Key2;
-	for (int i = 0; i < 8; ++i)
-	{
-		Key[i] = str[i];
-        Key2[i] = str[i];
-	}
+	//for (int i = 0; i < 8; ++i)
+	//{
+	//	Key[i] = str[i];
+    //    Key2[i] = str[i];
+	//}
+	memcpy(Key, &k, 8);
+	memcpy(Key2, &k, 8);
 	/* Set the parity of the key */
 	DES_set_odd_parity(&Key);
 	/* Check for Weak key generation */
 	if (-2 == (DES_set_key_checked(&Key, SchKey)))
 	{
-		printf("The key %ld is a weak key!\n", k);
+		//printf("The key %ld is a weak key!\n", k);
 	}
-    if (original || keycopy == 122786L) {
+    if (original || keycopy == 122345L) {
         if (original) {
             printf("Original key:\n");
             printf("key copy: %ld\n", keycopy);
-            printf("key string: %s\n", str);
+            //printf("key string: %s\n", str);
             print_data("key cblock sin parity", Key2, 8);
             print_data("key cblock", Key, 8);
         } else {
             printf("Key found:\n");
             printf("key copy: %ld\n", keycopy);
-            printf("key string: %s\n", str);
+            //printf("key string: %s\n", str);
             print_data("key cblock sin parity", Key2, 8);
             print_data("key cblock", Key, 8);
         }
