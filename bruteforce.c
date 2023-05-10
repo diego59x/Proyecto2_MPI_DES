@@ -3,15 +3,13 @@
 #include <string.h>
 #include <mpi.h>
 #include <openssl/des.h>
+#include "des_crypt.h"
 
-/* Print Encrypted and Decrypted data packets */
-void print_data(const char *tittle, const void *data, int len);
+void print_result(const char *header, const void* data);
 
 int tryKey(long key, char *ciph, int len, DES_cblock *iv);
 
 void decrypt(long key, char *ciph, int len, DES_cblock *iv, unsigned char* text);
-
-void long_to_str(long num, char* str);
 
 void set_key(long key, DES_key_schedule *SchKey, int original);
 
@@ -21,56 +19,16 @@ unsigned char input_data[] = "Prueba de proyecto 2";
 /* Tamaño del mensaje y del cifrado */
 int datalen = sizeof(input_data);
 
-/*
- * Table giving odd parity in the low bit for ASCII characters
- */
-static const char partab[128] =
-{
-  0x01, 0x01, 0x02, 0x02, 0x04, 0x04, 0x07, 0x07,
-  0x08, 0x08, 0x0b, 0x0b, 0x0d, 0x0d, 0x0e, 0x0e,
-  0x10, 0x10, 0x13, 0x13, 0x15, 0x15, 0x16, 0x16,
-  0x19, 0x19, 0x1a, 0x1a, 0x1c, 0x1c, 0x1f, 0x1f,
-  0x20, 0x20, 0x23, 0x23, 0x25, 0x25, 0x26, 0x26,
-  0x29, 0x29, 0x2a, 0x2a, 0x2c, 0x2c, 0x2f, 0x2f,
-  0x31, 0x31, 0x32, 0x32, 0x34, 0x34, 0x37, 0x37,
-  0x38, 0x38, 0x3b, 0x3b, 0x3d, 0x3d, 0x3e, 0x3e,
-  0x40, 0x40, 0x43, 0x43, 0x45, 0x45, 0x46, 0x46,
-  0x49, 0x49, 0x4a, 0x4a, 0x4c, 0x4c, 0x4f, 0x4f,
-  0x51, 0x51, 0x52, 0x52, 0x54, 0x54, 0x57, 0x57,
-  0x58, 0x58, 0x5b, 0x5b, 0x5d, 0x5d, 0x5e, 0x5e,
-  0x61, 0x61, 0x62, 0x62, 0x64, 0x64, 0x67, 0x67,
-  0x68, 0x68, 0x6b, 0x6b, 0x6d, 0x6d, 0x6e, 0x6e,
-  0x70, 0x70, 0x73, 0x73, 0x75, 0x75, 0x76, 0x76,
-  0x79, 0x79, 0x7a, 0x7a, 0x7c, 0x7c, 0x7f, 0x7f,
-};
-
-/*
- * Add odd parity to low bit of 8 byte key
- */
-void
-des_setparity (char *p)
-{
-  int i;
-
-  for (i = 0; i < 8; i++)
-    {
-      *p = partab[*p & 0x7f];
-      p++;
-    }
-}
-
 int main()
 {
 	/* Init vector */
 	DES_cblock iv = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 	DES_set_odd_parity(&iv);
-
     /* Llave original */
-	long the_key = 18015398519481984L;
+	long the_key = 36028797118963968L;
 	DES_key_schedule SchKey;
     /* Chequea paridad de la llave y la setea en SchKey */
 	set_key(the_key, &SchKey, 1);
-
 	/* Buffer para guardar el texto encriptado */
 	unsigned char *cipher[datalen];
 	/* Encriptación DES con modo CBC */
@@ -93,8 +51,8 @@ int main()
 	MPI_Comm_rank(comm, &id);
 
     if (id == 0) {
-        print_data("\n Original ", input_data, datalen);
-        print_data("\n Encrypted", cipher, datalen);
+        print_result("\n Original ", input_data);
+        print_result("\n Encrypted", cipher);
         printf("\n");
     }
     // para esperar y que los prints salngan siempre al inicio
@@ -129,7 +87,7 @@ int main()
 		if (tryKey(i, (char *)cipher, datalen, &iv))
 		{
 			found = i;
-			printf("Process %d found the key\n", id);
+			printf("El proceso %d encontró la key\n", id);
 			for (int node = 0; node < N; node++)
 			{
                 if (node == id) {
@@ -147,9 +105,9 @@ int main()
         tend = MPI_Wtime();
 		unsigned char text[datalen];
         decrypt(found, (char *)cipher, datalen, &iv, text);
-		printf("\nKey = %li\n", found);
-        print_data("\n Decrypted", text, datalen);
-		printf("\nTook %f ms to run\n", (tend-tstart));
+		printf("\nKey Found = %li\n", found);
+        print_result("\n Decrypted", text);
+		printf("\nDuración: %f s\n", (tend-tstart));
 	}
 
 	//FIN entorno MPI
@@ -159,8 +117,6 @@ int main()
 }
 
 void set_key(long key, DES_key_schedule *SchKey, int original) {
-    // copy of key
-    long keycopy = key;
     // set parity of key and do encrypt
 	long k = 0;
 	for (int i = 0; i < 8; ++i)
@@ -168,76 +124,31 @@ void set_key(long key, DES_key_schedule *SchKey, int original) {
 		key <<= 1;
 		k += (key & (0xFE << i * 8));
 	}
+	/* des_setparity de la libreria des/des_crypt.h */
 	des_setparity((char *)&k);
-	/* k to string */
-	//char *str = malloc(sizeof(char) * 8);
-	//sprintf(str, "%ld", k);
-	/* str to DES_cblock */
+	/* Pasar el numero a la llave de tipo DES_cblock */
 	DES_cblock Key;
-	DES_cblock Key2;
-	//for (int i = 0; i < 8; ++i)
-	//{
-	//	Key[i] = str[i];
-    //    Key2[i] = str[i];
-	//}
 	memcpy(Key, &k, 8);
-	memcpy(Key2, &k, 8);
 	/* Set the parity of the key */
 	DES_set_odd_parity(&Key);
 	/* Check for Weak key generation */
-	if (-2 == (DES_set_key_checked(&Key, SchKey)))
+	DES_set_key_checked(&Key, SchKey);
+	/* Check for Weak key generation */
+	if (DES_set_key_checked(&Key, SchKey) == -2 && original)
 	{
-		//printf("The key %ld is a weak key!\n", k);
+		printf("La llave %li es una weak key\n", key);
 	}
-    if (original || keycopy == 122345L) {
-        if (original) {
-            printf("Original key:\n");
-            printf("key copy: %ld\n", keycopy);
-            //printf("key string: %s\n", str);
-            print_data("key cblock sin parity", Key2, 8);
-            print_data("key cblock", Key, 8);
-        } else {
-            printf("Key found:\n");
-            printf("key copy: %ld\n", keycopy);
-            //printf("key string: %s\n", str);
-            print_data("key cblock sin parity", Key2, 8);
-            print_data("key cblock", Key, 8);
-        }
-    }
-}
-
-void long_to_str(long num, char* str) {
-    if (num < 0) {
-        *str++ = '-';
-        num = -num;
-    }
-    if (num == 0) {
-        *str++ = '0';
-    } else {
-        char buffer[20];
-        int i = 0;
-        while (num > 0) {
-            buffer[i++] = (num % 10) + '0';
-            num /= 10;
-        }
-        while (--i >= 0) {
-            *str++ = buffer[i];
-        }
-    }
-    *str = '\0';
 }
 
 void decrypt(long key, char *ciph, int len, DES_cblock *iv, unsigned char* text) {
     /* Init vector */
 	DES_cblock iv2 = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    memset(iv2,0,sizeof(DES_cblock)); // You need to start with the same iv value
 	DES_set_odd_parity(&iv2);
     /* Triple DES key for Encryption and Decryption */
 	DES_key_schedule SchKey2;
 	// set parity of key and do encrypt
 	set_key(key, &SchKey2, 0);
-    
-    memset(iv2,0,sizeof(DES_cblock)); // You need to start with the same iv value
-	DES_set_odd_parity(&iv2);
 	DES_ncbc_encrypt((unsigned char *)ciph, (unsigned char *)text, datalen, &SchKey2, &iv2, DES_DECRYPT);
 }
 
@@ -248,19 +159,17 @@ int tryKey(long key, char *ciph, int len, DES_cblock *iv)
 	return strstr(text, input_data) != NULL;
 }
 
-void print_data(const char *tittle, const void *data, int len)
-{
-	printf("%s : ", tittle);
+void print_result(const char *header, const void* data) {
+	/* print original data */
+	printf("%s : ", header);
 	const unsigned char *p = (const unsigned char *)data;
 	int i = 0;
-
-	for (; i < len; ++i)
+	for (; i < datalen; ++i)
 		printf("%02X ", *p++);
-
     /* print the ascii values */
     p = (const unsigned char *)data;
-	printf("%s : ", tittle);
-    for (i = 0; i < len; ++i)
+	printf("%s : ", header);
+    for (i = 0; i < datalen; ++i)
         printf("%c", *p++);
 	printf("\n");
 }
