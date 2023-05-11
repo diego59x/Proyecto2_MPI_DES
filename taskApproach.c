@@ -17,7 +17,7 @@ void decrypt(long key, char *ciph, int len, DES_cblock *iv, unsigned char* text,
 
 void set_key(long key, DES_key_schedule *SchKey, int original);
 
-void processTask(Task task, int id);
+void processTask(Task task, int id, char *ciph, int len, DES_cblock *iv, int datalen );
 
 int main() {
     int rank, size; // comm rank and size
@@ -45,10 +45,8 @@ int main() {
 	/* Encriptación DES con modo CBC */
 	DES_ncbc_encrypt((unsigned char *)input_data, (unsigned char *)cipher, datalen, &SchKey, &iv, DES_ENCRYPT);
 
-	/* fuerza bruta */
 	double tstart, tend; // cálculo de tiempo
-    /* upper es el máximo Long a comprobar,
-    la llave original tiene que ser menor a este número */
+    
 	long upper = (1L << 56); // upper bound DES keys 2^56
 	MPI_Status st;
 	MPI_Request req;
@@ -59,6 +57,8 @@ int main() {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
     if (rank == 0) {
+        /* upper es el máximo Long a comprobar,
+        la llave original tiene que ser menor a este número */
         long range_per_node = upper / size;
         long remainder = upper % size;
         long currentLower = 0;
@@ -79,16 +79,39 @@ int main() {
     MPI_Recv(&localTask, sizeof(Task), MPI_BYTE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
     // Process tasks
-    processTask(localTask, rank);
+    processTask(localTask, rank, cipher, datalen, &iv, datalen);
 
     MPI_Finalize();
     return 0;
 }
 
 // Function to simulate processing a task
-void processTask(Task task, int id) {
+void processTask(Task task, int id, char *ciph, int len, DES_cblock *iv, int datalen ) {
     printf("Node %d processing task: [%d - %d]\n", id, task.lower, task.upper);
     // Perform the actual processing of the task here
+	long found = 0L;
+	int ready = 0;
+    
+    // non blocking receive, revisar en el for si alguien ya encontro
+	MPI_Irecv(&found, 1, MPI_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, MPI_Request);
+
+	for (long i = task.lower; i < task.upper; ++i)
+	{
+        // revisa si ya termino el MPI_Irecv de arriba (si alguien ya encontro)
+		MPI_Test(MPI_Request, &ready, MPI_STATUS_IGNORE);
+		if (ready)
+			break; // ya encontraron, salir
+
+		if (tryKey(i, (char *)ciph, datalen, &iv, datalen))
+		{
+			found = i;
+			printf("El proceso %d encontró la key\n", id);
+            MPI_Cancel(MPI_Request);
+            MPI_Send(&found, 1, MPI_LONG, node, 0, comm); // avisar a otros
+			break;
+		}
+	}
+
 }
 
 void set_key(long key, DES_key_schedule *SchKey, int original) {
