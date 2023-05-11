@@ -31,7 +31,6 @@ int main()
     fclose(fp);
     /* Tamaño del mensaje y del cifrado */
     int datalen = strlen(input_data);
-    printf("Tamaño del mensaje: %d\n", datalen);
 	/* Buffer para guardar el texto encriptado */
 	unsigned char *cipher[datalen];
 	/* Encriptación DES con modo CBC */
