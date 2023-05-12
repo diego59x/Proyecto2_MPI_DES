@@ -7,9 +7,9 @@
 
 void print_result(const char *header, const void* data, int datalen);
 
-int tryKey(long key, char *ciph, int len, DES_cblock *iv, int datalen);
+int tryKey(long key, char *ciph, int len);
 
-void decrypt(long key, char *ciph, int len, DES_cblock *iv, unsigned char* text, int datalen);
+void decrypt(long key, char *ciph, int len, unsigned char* text);
 
 void set_key(long key, DES_key_schedule *SchKey, int original);
 
@@ -31,7 +31,6 @@ int main()
     fclose(fp);
     /* Tamaño del mensaje y del cifrado */
     int datalen = strlen(input_data);
-    printf("Tamaño del mensaje: %d\n", datalen);
 	/* Buffer para guardar el texto encriptado */
 	unsigned char *cipher[datalen];
 	/* Encriptación DES con modo CBC */
@@ -87,7 +86,7 @@ int main()
 		if (ready)
 			break; // ya encontraron, salir
 
-		if (tryKey(i, (char *)cipher, datalen, &iv, datalen))
+		if (tryKey(i, (char *)cipher, datalen))
 		{
 			found = i;
 			printf("El proceso %d encontró la key\n", id);
@@ -107,7 +106,7 @@ int main()
 	if(id==0){
         tend = MPI_Wtime();
 		unsigned char text[datalen];
-        decrypt(found, (char *)cipher, datalen, &iv, text, datalen);
+        decrypt(found, (char *)cipher, datalen, text);
 		printf("\nKey Found = %li\n", found);
         print_result("\n Decrypted", text, datalen);
 		printf("\nDuración: %f s\n", (tend-tstart));
@@ -143,23 +142,23 @@ void set_key(long key, DES_key_schedule *SchKey, int original) {
 	}
 }
 
-void decrypt(long key, char *ciph, int len, DES_cblock *iv, unsigned char* text, int datalen) {
+void decrypt(long key, char *ciph, int len, unsigned char* text) {
     /* Init vector */
-	DES_cblock iv2 = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    memset(iv2,0,sizeof(DES_cblock)); // You need to start with the same iv value
-	DES_set_odd_parity(&iv2);
+	DES_cblock iv = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    memset(iv,0,sizeof(DES_cblock)); // You need to start with the same iv value
+	DES_set_odd_parity(&iv);
     /* Triple DES key for Encryption and Decryption */
 	DES_key_schedule SchKey2;
 	// set parity of key and do encrypt
 	set_key(key, &SchKey2, 0);
-	DES_ncbc_encrypt((unsigned char *)ciph, (unsigned char *)text, datalen, &SchKey2, &iv2, DES_DECRYPT);
+	DES_ncbc_encrypt((unsigned char *)ciph, (unsigned char *)text, len, &SchKey2, &iv, DES_DECRYPT);
 }
 
-int tryKey(long key, char *ciph, int len, DES_cblock *iv, int datalen)
+int tryKey(long key, char *ciph, int len)
 {
     char search_text[] = "una prueba de";
-    unsigned char text[datalen];
-    decrypt(key, ciph, len, iv, text, datalen);
+    unsigned char text[len];
+    decrypt(key, ciph, len, text);
 	return strstr(text, search_text) != NULL;
 }
 

@@ -1,11 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <mpi.h>
 #include <openssl/des.h>
 #include "des_crypt.h"
 
-void print_result(const char *header, const void* data);
+// Structure to represent a task
+typedef struct {
+    long lower;
+    long upper;
+} Range;
+
+void print_result(const char *header, const void* data, int datalen);
 
 int tryKey(long key, char *ciph, int len);
 
@@ -13,11 +20,54 @@ void decrypt(long key, char *ciph, int len, unsigned char* text);
 
 void set_key(long key, DES_key_schedule *SchKey, int original);
 
-/* Input data to encrypt */
-unsigned char input_data[] = "Prueba de proyecto 2";
-
-/* Tamaño del mensaje y del cifrado */
-int datalen = sizeof(input_data);
+void test_range(Range range, char *ciph, int len, int id, int N, MPI_Comm comm, MPI_Request *req, int *ready);
+{
+    long randKey = range.lower + (rand() % (range.upper - range.lower));
+    if (tryKey(randKey, (char *)ciph, len))
+    {
+        printf("El proceso %d encontró la key\n", id);
+        for (int node = 0; node < N; node++)
+        {
+            if (node == id) {
+                MPI_Cancel(req);
+                continue;
+            }
+            MPI_Send(&randKey, 1, MPI_LONG, node, 0, comm); // avisar a otros
+        }
+        break;
+    }
+    /* si lower y upper son iguales, se setea el proceso como libre y se avisa a los demas */
+    if (range.lower == range.upper)
+    {
+        isProcessXbusy[id] = 0;
+        for (int node = 0; node < N; node++)
+        {
+            if (node != id) {
+                MPI_Send(&id, 1, MPI_INT, node, 2, comm);
+            }
+        }
+        printf("Proceso %d ya no tiene nada que probar, avisa a los demas que esta libre\n", id);
+        continue;
+    }
+    /* Se revisa si randKey es igual a los limites del rango */
+    if (randKey == localRange.lower || randKey == localRange.upper)
+    {
+        /* si lo es, se crea el nuevo rango y continua */
+        if (randKey == localRange.lower)
+        {
+            localRange.lower = randKey + 1;
+        }
+        else
+        {
+            localRange.upper = randKey - 1;
+        }
+        continue;
+    }
+    /* si el rango se puede dividir en dos, se cambia el rango, se crea uno nuevo y se envia a un proceso libre */
+    else {
+    Range rangeLeft = {range.lower, randKey - 1};
+    Range rangeRight = {randKey + 1, range.upper};
+}
 
 int main()
 {
@@ -25,10 +75,19 @@ int main()
 	DES_cblock iv = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 	DES_set_odd_parity(&iv);
     /* Llave original */
-	long the_key = 99999999L;
+	//long the_key = 36028797019963968L;
+	long the_key = 120L;
 	DES_key_schedule SchKey;
     /* Chequea paridad de la llave y la setea en SchKey */
 	set_key(the_key, &SchKey, 1);
+    /* lee el archivo text.txt para obtener el mensaje */
+    FILE *fp;
+    char input_data[1000];
+    fp = fopen("text.txt", "r");
+    fgets(input_data, 1000, fp);
+    fclose(fp);
+    /* Tamaño del mensaje y del cifrado */
+    int datalen = strlen(input_data);
 	/* Buffer para guardar el texto encriptado */
 	unsigned char *cipher[datalen];
 	/* Encriptación DES con modo CBC */
@@ -39,9 +98,8 @@ int main()
 	int N, id; // comm size and rank
     /* upper es el máximo Long a comprobar,
     la llave original tiene que ser menor a este número */
-	long upper = (1L << 56); // upper bound DES keys 2^56
-	long mylower, myupper; // local lower and upper bounds
-	MPI_Status st;
+	long upper = (1L << 8); // upper bound DES keys 2^56
+	//MPI_Status st;
 	MPI_Request req;
 	MPI_Comm comm = MPI_COMM_WORLD;
 
@@ -51,62 +109,44 @@ int main()
 	MPI_Comm_rank(comm, &id);
 
     if (id == 0) {
-        print_result("\n Original ", input_data);
-        print_result("\n Encrypted", cipher);
+        print_result("\n Original ", input_data, datalen);
+        print_result("\n Encrypted", cipher, datalen);
         printf("\n");
     }
     // para esperar y que los prints salngan siempre al inicio
     MPI_Barrier(comm);
 
-	tstart = MPI_Wtime();
-
+    
 	long found = 0L;
 	int ready = 0;
+    Range initialRange;
+
+	tstart = MPI_Wtime();
 
 	// distribuir trabajo de forma naive
 	long range_per_node = upper / N;
-	mylower = range_per_node * id;
-	myupper = range_per_node * (id + 1) - 1;
+	initialRange.lower = range_per_node * id;
+	initialRange.upper = range_per_node * (id + 1) - 1;
 	if (id == N - 1)
 	{
 		// compensar residuo
-		myupper = upper;
+		initialRange.upper = upper;
 	}
 	printf("Process %d:\tlower %ld - upper %ld\n", id, mylower, myupper);
 
-	// non blocking receive, revisar en el for si alguien ya encontro
-	MPI_Irecv(&found, 1, MPI_LONG, MPI_ANY_SOURCE, 0, comm, &req);
+	// non blocking receive, revisar si alguien ya encontro
+	MPI_Irecv(&found, 1, MPI_LONG, MPI_ANY_SOURCE, 1, comm, &req);
 
-	for (long i = mylower; i < myupper; ++i)
-	{
-        // revisa si ya termino el MPI_Irecv de arriba (si alguien ya encontro)
-		MPI_Test(&req, &ready, MPI_STATUS_IGNORE);
-		if (ready)
-			break; // ya encontraron, salir
+    /* do shit */
+    test_range(initialRange, &cipher, datalen, id, N, comm, &req, &ready);
 
-		if (tryKey(i, (char *)cipher, datalen))
-		{
-			found = i;
-			printf("El proceso %d encontró la key\n", id);
-			for (int node = 0; node < N; node++)
-			{
-                if (node == id) {
-                    MPI_Cancel(&req);
-                    continue;
-                }
-				MPI_Send(&found, 1, MPI_LONG, node, 0, comm); // avisar a otros
-			}
-			break;
-		}
-	}
-	
 	//wait y luego imprimir el texto
 	if(id==0){
         tend = MPI_Wtime();
 		unsigned char text[datalen];
         decrypt(found, (char *)cipher, datalen, text);
 		printf("\nKey Found = %li\n", found);
-        print_result("\n Decrypted", text);
+        print_result("\n Decrypted", text, datalen);
 		printf("\nDuración: %f s\n", (tend-tstart));
 	}
 
@@ -149,17 +189,18 @@ void decrypt(long key, char *ciph, int len, unsigned char* text) {
 	DES_key_schedule SchKey2;
 	// set parity of key and do encrypt
 	set_key(key, &SchKey2, 0);
-	DES_ncbc_encrypt((unsigned char *)ciph, (unsigned char *)text, datalen, &SchKey2, &iv, DES_DECRYPT);
+	DES_ncbc_encrypt((unsigned char *)ciph, (unsigned char *)text, len, &SchKey2, &iv, DES_DECRYPT);
 }
 
 int tryKey(long key, char *ciph, int len)
 {
-    unsigned char text[datalen];
-    decrypt(key, ciph, len, iv, text);
-	return strstr(text, input_data) != NULL;
+    char search_text[] = "una prueba de";
+    unsigned char text[len];
+    decrypt(key, ciph, len, text);
+	return strstr(text, search_text) != NULL;
 }
 
-void print_result(const char *header, const void* data) {
+void print_result(const char *header, const void* data, int datalen) {
 	/* print original data */
 	printf("%s : ", header);
 	const unsigned char *p = (const unsigned char *)data;
