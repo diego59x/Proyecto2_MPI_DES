@@ -17,7 +17,7 @@ void decrypt(long key, char *ciph, int len, DES_cblock *iv, unsigned char* text,
 
 void set_key(long key, DES_key_schedule *SchKey, int original);
 
-void processTask(Task task, int id, char *ciph, int len, DES_cblock *iv, int datalen );
+void processTask(Task task, int id, char *ciph, int len, DES_cblock *iv, int datalen, MPI_Request *req );
 
 int main() {
     int rank, size; // comm rank and size
@@ -79,26 +79,26 @@ int main() {
     MPI_Recv(&localTask, sizeof(Task), MPI_BYTE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
     // Process tasks
-    processTask(localTask, rank, cipher, datalen, &iv, datalen);
+    processTask(localTask, rank, (char *)cipher, datalen, &iv, datalen, &req);
 
     MPI_Finalize();
     return 0;
 }
 
 // Function to simulate processing a task
-void processTask(Task task, int id, char *ciph, int len, DES_cblock *iv, int datalen ) {
+void processTask(Task task, int id, (char *)ciph, int len, DES_cblock *iv, int datalen, MPI_Request *req ) {
     printf("Node %d processing task: [%d - %d]\n", id, task.lower, task.upper);
     // Perform the actual processing of the task here
 	long found = 0L;
 	int ready = 0;
     
     // non blocking receive, revisar en el for si alguien ya encontro
-	MPI_Irecv(&found, 1, MPI_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, MPI_Request);
+	MPI_Irecv(&found, 1, MPI_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &req);
 
 	for (long i = task.lower; i < task.upper; ++i)
 	{
         // revisa si ya termino el MPI_Irecv de arriba (si alguien ya encontro)
-		MPI_Test(MPI_Request, &ready, MPI_STATUS_IGNORE);
+		MPI_Test(&req, &ready, MPI_STATUS_IGNORE);
 		if (ready)
 			break; // ya encontraron, salir
 
@@ -106,8 +106,9 @@ void processTask(Task task, int id, char *ciph, int len, DES_cblock *iv, int dat
 		{
 			found = i;
 			printf("El proceso %d encontró la key\n", id);
-            MPI_Cancel(MPI_Request);
-            MPI_Send(&found, 1, MPI_LONG, node, 0, comm); // avisar a otros
+            MPI_Cancel(&req);
+
+            // MPI_Bcast(&localTask, sizeof(Task), MPI_BYTE, 0, MPI_COMM_WORLD);
 			break;
 		}
 	}
