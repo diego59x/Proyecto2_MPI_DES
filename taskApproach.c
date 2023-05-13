@@ -113,29 +113,32 @@ int main() {
 void processTask(Task task, int id, long *found, int *flag, char *ciph, int len, DES_cblock *iv, int datalen, MPI_Request *req) {
     printf("Node %d processing task: [%li - %li]\n", id, task.lower, task.upper);
     // Perform the actual processing of the task here
-	int ready = 0;
+    int ready = 0;
+    MPI_Request req_recv = MPI_REQUEST_NULL;
     
     // non blocking receive, revisar en el for si alguien ya encontro
-	MPI_Irecv(found, 1, MPI_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &req[id]);
+    MPI_Irecv(found, 1, MPI_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &req_recv);
 
-	for (long i = task.lower; i < task.upper; ++i)
-	{
+    for (long i = task.lower; i < task.upper; ++i)
+    {
         // revisa si ya termino el MPI_Irecv de arriba (si alguien ya encontro)
-		MPI_Test(&req[id], &ready, MPI_STATUS_IGNORE);
-		if (ready)
-			break; // ya encontraron, salir
+        MPI_Test(&req_recv, &ready, MPI_STATUS_IGNORE);
+        if (ready)
+            break; // ya encontraron, salir
 
-		if (tryKey(i, (char *)ciph, datalen, iv, datalen))
-		{
-			(*found) = i;
-			printf("El proceso %d encontró la key %li\n", id, i);
-            MPI_Cancel(req);
+        if (tryKey(i, (char *)ciph, datalen, iv, datalen))
+        {
+            (*found) = i;
+            printf("El proceso %d encontró la key %li\n", id, i);
+            MPI_Cancel(&req_recv);
+            MPI_Request_free(&req_recv);
             (*flag) = 1;
+            break;
+        }
+    }
 
-			break;
-		}
-	}
-
+    MPI_Request_free(&req_recv);
+    req[id] = MPI_REQUEST_NULL;
 }
 
 void set_key(long key, DES_key_schedule *SchKey, int original) {
