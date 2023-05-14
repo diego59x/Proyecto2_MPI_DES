@@ -30,7 +30,7 @@ int main() {
 	DES_cblock iv = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 	DES_set_odd_parity(&iv);
     /* Llave original */
-	long the_key = 36028797019963968L;
+	long the_key = 10L;
 	DES_key_schedule SchKey;
     /* Chequea paridad de la llave y la setea en SchKey */
 	set_key(the_key, &SchKey, 1);
@@ -42,7 +42,6 @@ int main() {
     fclose(fp);
     /* Tamaño del mensaje y del cifrado */
     int datalen = strlen(input_data);
-    printf("Tamaño del mensaje: %d\n", datalen);
 	/* Buffer para guardar el texto encriptado */
 	unsigned char *cipher[datalen];
     
@@ -51,7 +50,7 @@ int main() {
 
 	double tstart, tend; // cálculo de tiempo
     
-	long upper = (1L << 56); // upper bound DES keys 2^56
+	long upper = (1L << 4); // upper bound DES keys 2^56
 	MPI_Status st;
 	MPI_Request req;
     MPI_Comm comm = MPI_COMM_WORLD;
