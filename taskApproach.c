@@ -52,13 +52,13 @@ int main() {
     
 	long upper = (1L << 4); // upper bound DES keys 2^56
 	MPI_Status st;
-	MPI_Request req;
     MPI_Comm comm = MPI_COMM_WORLD;
 
 	// INIT MPI
 	MPI_Init(NULL, NULL);
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &size);
+    MPI_Request req;
 
     if (rank == 0) {
         /* upper es el máximo Long a comprobar,
@@ -86,22 +86,17 @@ int main() {
 	long found = 0L;
     int stopFlag = 0;
     processTask(localTask, rank, &found, &stopFlag, (char *)cipher, datalen, &iv, datalen, &req);
-
-    MPI_Bcast(&stopFlag, 1, MPI_INT, 0, MPI_COMM_WORLD);
-
-    if (stopFlag != 0) {
-        printf("Termino \n");
-        MPI_Finalize();
-    }
+    printf("\nKey Found 1 = %li rank = %d\n", found, rank);
 
     //wait y luego imprimir el texto
-	if(rank==0) {
+	if(found != 0) {
         tend = MPI_Wtime();
 		unsigned char text[datalen];
         decrypt(found, (char *)cipher, datalen, text);
 		printf("\nKey Found = %li\n", found);
         print_result("\n Decrypted", text, datalen);
 		printf("\nDuración: %f s\n", (tend-tstart));
+        MPI_Abort(MPI_COMM_WORLD, 1);
 	}
 
     MPI_Finalize();
@@ -112,32 +107,30 @@ int main() {
 void processTask(Task task, int id, long *found, int *flag, char *ciph, int len, DES_cblock *iv, int datalen, MPI_Request *req) {
     printf("Node %d processing task: [%li - %li]\n", id, task.lower, task.upper);
     // Perform the actual processing of the task here
-    int ready = 0;
-    MPI_Request req_recv = MPI_REQUEST_NULL;
+    MPI_Request req_recv;
+    int flag_value  = 0, ready = 0;
     
     // non blocking receive, revisar en el for si alguien ya encontro
     MPI_Irecv(found, 1, MPI_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &req_recv);
 
     for (long i = task.lower; i < task.upper; ++i)
     {
-        // revisa si ya termino el MPI_Irecv de arriba (si alguien ya encontro)
         MPI_Test(&req_recv, &ready, MPI_STATUS_IGNORE);
-        if (ready)
-            break; // ya encontraron, salir
+        if (ready) {
+            // Another process already found the key, exit
+            (*flag) = 1;
+            break;
+        }
 
         if (tryKey(i, (char *)ciph, datalen, iv, datalen))
         {
             (*found) = i;
             printf("El proceso %d encontró la key %li\n", id, i);
-            MPI_Cancel(&req_recv);
-            MPI_Request_free(&req_recv);
+            flag_value = 1;
             (*flag) = 1;
             break;
         }
     }
-
-    MPI_Request_free(&req_recv);
-    req[id] = MPI_REQUEST_NULL;
 }
 
 void set_key(long key, DES_key_schedule *SchKey, int original) {
