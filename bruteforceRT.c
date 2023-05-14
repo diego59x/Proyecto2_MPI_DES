@@ -20,9 +20,26 @@ void decrypt(long key, char *ciph, int len, unsigned char* text);
 
 void set_key(long key, DES_key_schedule *SchKey, int original);
 
-void test_range(Range range, char *ciph, int len, int id, int N, MPI_Comm comm, MPI_Request *req, int *ready);
+void test_range(Range range, char *ciph, int len, int id, int N, MPI_Comm *comm, MPI_Request *req, int *ready, long *found)
 {
-    long randKey = range.lower + (rand() % (range.upper - range.lower));
+    printf("req antes de recibir: %d\n", *req);
+	// non blocking receive, revisar si alguien ya encontro
+	MPI_Irecv(found, 1, MPI_LONG, MPI_ANY_SOURCE, 1, *comm, req);
+    printf("req despues de recibir: %d\n", *req);
+    // revisa si ya termino el MPI_Irecv de arriba (si alguien ya encontro)
+    printf("req: %d\n", *req);
+    MPI_Test(req, ready, MPI_STATUS_IGNORE);
+    printf("ready: %d\n", *ready);
+    if (*ready)
+        return; // ya encontraron, salir
+    long randKey = 0L;
+    /* Para evitar division por cero al usar random */
+    if (range.upper == range.lower) {
+        randKey = range.lower;
+    } else {
+        randKey = range.lower + (rand() % (range.upper - range.lower));
+    }
+    printf("Proceso %d prueba con llave %ld\n", id, randKey);
     if (tryKey(randKey, (char *)ciph, len))
     {
         printf("El proceso %d encontró la key\n", id);
@@ -32,41 +49,41 @@ void test_range(Range range, char *ciph, int len, int id, int N, MPI_Comm comm, 
                 MPI_Cancel(req);
                 continue;
             }
-            MPI_Send(&randKey, 1, MPI_LONG, node, 0, comm); // avisar a otros
+            MPI_Send(&randKey, 1, MPI_LONG, node, 0, *comm);
         }
-        break;
+        return;
     }
-    /* si lower y upper son iguales, se setea el proceso como libre y se avisa a los demas */
+    /* si lower y upper son iguales, retorna */
     if (range.lower == range.upper)
     {
-        isProcessXbusy[id] = 0;
-        for (int node = 0; node < N; node++)
-        {
-            if (node != id) {
-                MPI_Send(&id, 1, MPI_INT, node, 2, comm);
-            }
-        }
-        printf("Proceso %d ya no tiene nada que probar, avisa a los demas que esta libre\n", id);
-        continue;
+        printf("no encontró la key\n");
+        return;
     }
     /* Se revisa si randKey es igual a los limites del rango */
-    if (randKey == localRange.lower || randKey == localRange.upper)
+    if (randKey == range.lower || randKey == range.upper)
     {
-        /* si lo es, se crea el nuevo rango y continua */
-        if (randKey == localRange.lower)
+        /* si lo es, se crea el nuevo rango y prueba solo este nuevo rango*/
+        Range newRange = {range.lower, range.upper};
+        if (randKey == range.lower)
         {
-            localRange.lower = randKey + 1;
+            range.lower = range.lower + 1;
         }
         else
         {
-            localRange.upper = randKey - 1;
+            range.upper = range.upper - 1;
         }
-        continue;
+        test_range(range, ciph, len, id, N, comm, req, ready, found);
     }
     /* si el rango se puede dividir en dos, se cambia el rango, se crea uno nuevo y se envia a un proceso libre */
-    else {
-    Range rangeLeft = {range.lower, randKey - 1};
-    Range rangeRight = {randKey + 1, range.upper};
+    else
+    {
+        Range rangeLeft = {range.lower, randKey - 1};
+        Range rangeRight = {randKey + 1, range.upper};
+        printf("nuevo rango: %ld - %ld\n", rangeLeft.lower, rangeLeft.upper);
+        test_range(rangeLeft, ciph, len, id, N, comm, req, ready, found);
+        printf("nuevo rango: %ld - %ld\n", rangeRight.lower, rangeRight.upper);
+        test_range(rangeRight, ciph, len, id, N, comm, req, ready, found);
+    }
 }
 
 int main()
@@ -76,7 +93,7 @@ int main()
 	DES_set_odd_parity(&iv);
     /* Llave original */
 	//long the_key = 36028797019963968L;
-	long the_key = 120L;
+	long the_key = 10L;
 	DES_key_schedule SchKey;
     /* Chequea paridad de la llave y la setea en SchKey */
 	set_key(the_key, &SchKey, 1);
@@ -98,7 +115,7 @@ int main()
 	int N, id; // comm size and rank
     /* upper es el máximo Long a comprobar,
     la llave original tiene que ser menor a este número */
-	long upper = (1L << 8); // upper bound DES keys 2^56
+	long upper = (1L << 4); // upper bound DES keys 2^56
 	//MPI_Status st;
 	MPI_Request req;
 	MPI_Comm comm = MPI_COMM_WORLD;
@@ -116,7 +133,6 @@ int main()
     // para esperar y que los prints salngan siempre al inicio
     MPI_Barrier(comm);
 
-    
 	long found = 0L;
 	int ready = 0;
     Range initialRange;
@@ -132,13 +148,10 @@ int main()
 		// compensar residuo
 		initialRange.upper = upper;
 	}
-	printf("Process %d:\tlower %ld - upper %ld\n", id, mylower, myupper);
+	printf("Process %d:\tlower %ld - upper %ld\n", id, initialRange.lower, initialRange.upper);
 
-	// non blocking receive, revisar si alguien ya encontro
-	MPI_Irecv(&found, 1, MPI_LONG, MPI_ANY_SOURCE, 1, comm, &req);
-
-    /* do shit */
-    test_range(initialRange, &cipher, datalen, id, N, comm, &req, &ready);
+    /* empieza recursividad en el proceso */
+    test_range(initialRange, (char *)cipher, datalen, id, N, &comm, &req, &ready, &found);
 
 	//wait y luego imprimir el texto
 	if(id==0){
