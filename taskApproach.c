@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <limits.h>
 #include <mpi.h>
+#include <string.h>
+#include <openssl/des.h>
+#include "des_crypt.h"
 
 // Structure to represent a task
 typedef struct {
@@ -13,11 +16,11 @@ void print_result(const char *header, const void* data, int datalen);
 
 int tryKey(long key, char *ciph, int len, DES_cblock *iv, int datalen);
 
-void decrypt(long key, char *ciph, int len, DES_cblock *iv, unsigned char* text, int datalen);
+void decrypt(long key, char *ciph, int len, unsigned char* text);
 
 void set_key(long key, DES_key_schedule *SchKey, int original);
 
-void processTask(Task task, int id);
+void processTask(Task task, int id, long *found, int *flag, char *ciph, int len, DES_cblock *iv, int datalen, MPI_Request *req);
 
 int main() {
     int rank, size; // comm rank and size
@@ -42,23 +45,25 @@ int main() {
     printf("Tamaño del mensaje: %d\n", datalen);
 	/* Buffer para guardar el texto encriptado */
 	unsigned char *cipher[datalen];
+    
 	/* Encriptación DES con modo CBC */
 	DES_ncbc_encrypt((unsigned char *)input_data, (unsigned char *)cipher, datalen, &SchKey, &iv, DES_ENCRYPT);
 
-	/* fuerza bruta */
 	double tstart, tend; // cálculo de tiempo
-    /* upper es el máximo Long a comprobar,
-    la llave original tiene que ser menor a este número */
+    
 	long upper = (1L << 56); // upper bound DES keys 2^56
 	MPI_Status st;
 	MPI_Request req;
+    MPI_Comm comm = MPI_COMM_WORLD;
 
 	// INIT MPI
 	MPI_Init(NULL, NULL);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_rank(comm, &rank);
+    MPI_Comm_size(comm, &size);
 
     if (rank == 0) {
+        /* upper es el máximo Long a comprobar,
+        la llave original tiene que ser menor a este número */
         long range_per_node = upper / size;
         long remainder = upper % size;
         long currentLower = 0;
@@ -71,24 +76,69 @@ int main() {
                 localTask.upper++;
             }
 
-            MPI_Send(&localTask, sizeof(Task), MPI_BYTE, i, 0, MPI_COMM_WORLD);
+            MPI_Send(&localTask, sizeof(Task), MPI_BYTE, i, 0, comm);
             currentLower = localTask.upper + 1;
         }
     }
 
-    MPI_Recv(&localTask, sizeof(Task), MPI_BYTE, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    MPI_Recv(&localTask, sizeof(Task), MPI_BYTE, 0, 0, comm, MPI_STATUS_IGNORE);
 
     // Process tasks
-    processTask(localTask, rank);
+	long found = 0L;
+    int stopFlag = 0;
+    processTask(localTask, rank, &found, &stopFlag, (char *)cipher, datalen, &iv, datalen, &req);
+
+    MPI_Bcast(&stopFlag, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+    if (stopFlag != 0) {
+        printf("Termino \n");
+        MPI_Finalize();
+    }
+
+    //wait y luego imprimir el texto
+	if(rank==0) {
+        tend = MPI_Wtime();
+		unsigned char text[datalen];
+        decrypt(found, (char *)cipher, datalen, text);
+		printf("\nKey Found = %li\n", found);
+        print_result("\n Decrypted", text, datalen);
+		printf("\nDuración: %f s\n", (tend-tstart));
+	}
 
     MPI_Finalize();
     return 0;
 }
 
 // Function to simulate processing a task
-void processTask(Task task, int id) {
-    printf("Node %d processing task: [%d - %d]\n", id, task.lower, task.upper);
+void processTask(Task task, int id, long *found, int *flag, char *ciph, int len, DES_cblock *iv, int datalen, MPI_Request *req) {
+    printf("Node %d processing task: [%li - %li]\n", id, task.lower, task.upper);
     // Perform the actual processing of the task here
+    int ready = 0;
+    MPI_Request req_recv = MPI_REQUEST_NULL;
+    
+    // non blocking receive, revisar en el for si alguien ya encontro
+    MPI_Irecv(found, 1, MPI_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &req_recv);
+
+    for (long i = task.lower; i < task.upper; ++i)
+    {
+        // revisa si ya termino el MPI_Irecv de arriba (si alguien ya encontro)
+        MPI_Test(&req_recv, &ready, MPI_STATUS_IGNORE);
+        if (ready)
+            break; // ya encontraron, salir
+
+        if (tryKey(i, (char *)ciph, datalen, iv, datalen))
+        {
+            (*found) = i;
+            printf("El proceso %d encontró la key %li\n", id, i);
+            MPI_Cancel(&req_recv);
+            MPI_Request_free(&req_recv);
+            (*flag) = 1;
+            break;
+        }
+    }
+
+    MPI_Request_free(&req_recv);
+    req[id] = MPI_REQUEST_NULL;
 }
 
 void set_key(long key, DES_key_schedule *SchKey, int original) {
@@ -115,7 +165,7 @@ void set_key(long key, DES_key_schedule *SchKey, int original) {
 	}
 }
 
-void decrypt(long key, char *ciph, int len, DES_cblock *iv, unsigned char* text, int datalen) {
+void decrypt(long key, char *ciph, int len, unsigned char* text) {
     /* Init vector */
 	DES_cblock iv2 = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     memset(iv2,0,sizeof(DES_cblock)); // You need to start with the same iv value
@@ -124,14 +174,14 @@ void decrypt(long key, char *ciph, int len, DES_cblock *iv, unsigned char* text,
 	DES_key_schedule SchKey2;
 	// set parity of key and do encrypt
 	set_key(key, &SchKey2, 0);
-	DES_ncbc_encrypt((unsigned char *)ciph, (unsigned char *)text, datalen, &SchKey2, &iv2, DES_DECRYPT);
+	DES_ncbc_encrypt((unsigned char *)ciph, (unsigned char *)text, len, &SchKey2, &iv2, DES_DECRYPT);
 }
 
 int tryKey(long key, char *ciph, int len, DES_cblock *iv, int datalen)
 {
     char search_text[] = "una prueba de";
     unsigned char text[datalen];
-    decrypt(key, ciph, len, iv, text, datalen);
+    decrypt(key, ciph, len, text);
 	return strstr(text, search_text) != NULL;
 }
 
