@@ -28,8 +28,7 @@ int main()
 	DES_cblock iv = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 	DES_set_odd_parity(&iv);
     /* Llave original */
-	//long the_key = 36028797019963968L;
-	long the_key = 36028897018963968L;
+	long the_key = 36028797118963968L;
 	DES_key_schedule SchKey;
     /* Chequea paridad de la llave y la setea en SchKey */
 	set_key(the_key, &SchKey, 1);
@@ -52,7 +51,6 @@ int main()
     /* upper es el máximo Long a comprobar,
     la llave original tiene que ser menor a este número */
 	long upper = (1L << 56); // upper bound DES keys 2^56
-	MPI_Status st;
 	MPI_Request req;
 	MPI_Comm comm = MPI_COMM_WORLD;
 
@@ -124,6 +122,7 @@ void test_range(Range range, char *ciph, int len, int id, int N, MPI_Comm *comm,
     if (tryKey(randKey, (char *)ciph, len))
     {
         *ready = 1;
+        *found = randKey;
         for (int node = 0; node < N; node++)
         {
             if (node == id) {
