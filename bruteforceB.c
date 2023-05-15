@@ -19,7 +19,7 @@ int main()
 	DES_cblock iv = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 	DES_set_odd_parity(&iv);
     /* Llave original */
-	long the_key = 36028797019963968L;
+	long the_key = 18014398509481984L;
 	DES_key_schedule SchKey;
     /* Chequea paridad de la llave y la setea en SchKey */
 	set_key(the_key, &SchKey, 1);
@@ -89,7 +89,6 @@ int main()
 		if (tryKey(i, (char *)cipher, datalen))
 		{
 			found = i;
-			printf("El proceso %d encontró la key\n", id);
 			for (int node = 0; node < N; node++)
 			{
                 if (node == id) {

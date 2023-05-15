@@ -28,7 +28,7 @@ int main()
 	DES_cblock iv = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 	DES_set_odd_parity(&iv);
     /* Llave original */
-	long the_key = 10L;
+	long the_key = 33554432L;
 	DES_key_schedule SchKey;
     /* Chequea paridad de la llave y la setea en SchKey */
 	set_key(the_key, &SchKey, 1);
@@ -50,7 +50,7 @@ int main()
 	int N, id; // comm size and rank
     /* upper es el máximo Long a comprobar,
     la llave original tiene que ser menor a este número */
-	long upper = (1L << 4); // upper bound DES keys 2^56
+	long upper = (1L << 56); // upper bound DES keys 2^56
 	MPI_Request req;
 	MPI_Comm comm = MPI_COMM_WORLD;
 
@@ -114,17 +114,14 @@ void test_range(Range range, char *ciph, int len, int id, int N, MPI_Comm *comm,
         return; // ya encontraron, salir
     }
     long midKey = 0L;
-    printf("Process %d:\tlower %ld - upper %ld\n", id, range.lower, range.upper);
     /* Para evitar division por cero al usar random */
     if (range.upper == range.lower) {
         midKey = range.lower;
     } else {
-        midKey = range.lower + (range.upper - range.lower) / 2;
+        midKey = range.lower + ((range.upper - range.lower) / 2L);
     }
-    printf("Process %d:\tmidKey %ld\n", id, midKey);
     if (tryKey(midKey, (char *)ciph, len))
     {
-        printf("Process %d:\tkey found %ld\n", id, midKey);
         *ready = 1;
         *found = midKey;
         for (int node = 0; node < N; node++)
@@ -162,20 +159,9 @@ void test_range(Range range, char *ciph, int len, int id, int N, MPI_Comm *comm,
     {
         Range rangeLeft = {range.lower, midKey - 1};
         Range rangeRight = {midKey + 1, range.upper};
-        /* random que puede ser 0 o 1 */
-        int randRange = rand() % 2;
-        if (randRange == 0)
-        {
-            /* Hace primero el rangeLeft */
-            test_range(rangeLeft, ciph, len, id, N, comm, req, ready, found);
-            test_range(rangeRight, ciph, len, id, N, comm, req, ready, found);
-        }
-        else
-        {
-            /* Hace primero el rangeRight */
-            test_range(rangeRight, ciph, len, id, N, comm, req, ready, found);
-            test_range(rangeLeft, ciph, len, id, N, comm, req, ready, found);
-        }
+        /* Hace primero el rangeLeft */
+        test_range(rangeLeft, ciph, len, id, N, comm, req, ready, found);
+        test_range(rangeRight, ciph, len, id, N, comm, req, ready, found);
     }
 }
 
