@@ -28,7 +28,7 @@ int main()
 	DES_cblock iv = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 	DES_set_odd_parity(&iv);
     /* Llave original */
-	long the_key = 134227728L;
+	long the_key = 10L;
 	DES_key_schedule SchKey;
     /* Chequea paridad de la llave y la setea en SchKey */
 	set_key(the_key, &SchKey, 1);
@@ -50,7 +50,7 @@ int main()
 	int N, id; // comm size and rank
     /* upper es el máximo Long a comprobar,
     la llave original tiene que ser menor a este número */
-	long upper = (1L << 28); // upper bound DES keys 2^56
+	long upper = (1L << 4); // upper bound DES keys 2^56
 	MPI_Request req;
 	MPI_Comm comm = MPI_COMM_WORLD;
 
@@ -113,24 +113,27 @@ void test_range(Range range, char *ciph, int len, int id, int N, MPI_Comm *comm,
     if (*ready) {
         return; // ya encontraron, salir
     }
-    long randKey = 0L;
+    long midKey = 0L;
+    printf("Process %d:\tlower %ld - upper %ld\n", id, range.lower, range.upper);
     /* Para evitar division por cero al usar random */
     if (range.upper == range.lower) {
-        randKey = range.lower;
+        midKey = range.lower;
     } else {
-        randKey = range.lower + (rand() % (range.upper - range.lower));
+        midKey = range.lower + (range.upper - range.lower) / 2;
     }
-    if (tryKey(randKey, (char *)ciph, len))
+    printf("Process %d:\tmidKey %ld\n", id, midKey);
+    if (tryKey(midKey, (char *)ciph, len))
     {
+        printf("Process %d:\tkey found %ld\n", id, midKey);
         *ready = 1;
-        *found = randKey;
+        *found = midKey;
         for (int node = 0; node < N; node++)
         {
             if (node == id) {
                 MPI_Cancel(req);
                 continue;
             }
-            MPI_Send(&randKey, 1, MPI_LONG, node, 1, *comm);
+            MPI_Send(&midKey, 1, MPI_LONG, node, 1, *comm);
         }
         return;
     }
@@ -139,12 +142,12 @@ void test_range(Range range, char *ciph, int len, int id, int N, MPI_Comm *comm,
     {
         return;
     }
-    /* Se revisa si randKey es igual a los limites del rango */
-    if (randKey == range.lower || randKey == range.upper)
+    /* Se revisa si midKey es igual a los limites del rango */
+    if (midKey == range.lower || midKey == range.upper)
     {
         /* si lo es, se crea el nuevo rango y prueba solo este nuevo rango*/
         Range newRange = {range.lower, range.upper};
-        if (randKey == range.lower)
+        if (midKey == range.lower)
         {
             range.lower = range.lower + 1;
         }
@@ -157,8 +160,8 @@ void test_range(Range range, char *ciph, int len, int id, int N, MPI_Comm *comm,
     /* si el rango se puede dividir en dos, se cambia el rango, se crea uno nuevo y se envia a un proceso libre */
     else
     {
-        Range rangeLeft = {range.lower, randKey - 1};
-        Range rangeRight = {randKey + 1, range.upper};
+        Range rangeLeft = {range.lower, midKey - 1};
+        Range rangeRight = {midKey + 1, range.upper};
         /* random que puede ser 0 o 1 */
         int randRange = rand() % 2;
         if (randRange == 0)
